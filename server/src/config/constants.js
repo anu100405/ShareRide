@@ -68,5 +68,5 @@ module.exports = {
   MAX_SHARED_PASSENGERS: 3,
 
   // Distance in km for finding nearby drivers
-  NEARBY_DRIVER_RADIUS_KM: 5,
+  NEARBY_DRIVER_RADIUS_KM: 10000,
 };

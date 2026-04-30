@@ -17,6 +17,12 @@ const RIDE_TYPES = [
   { value: 'shared', label: 'Shared', desc: '30% cheaper' },
 ];
 
+// Gender preference options (only shown when rideType === 'shared')
+const GENDER_PREF_OPTIONS = [
+  { value: 'any', label: 'Any co-passenger', icon: '👥' },
+  { value: 'female_only', label: 'Women only', icon: '♀️' },
+];
+
 const statusMeta = {
   searching: { label: 'Finding your driver...', color: 'var(--blue)', icon: '🔍' },
   accepted: { label: 'Driver on the way!', color: 'var(--green)', icon: '🚗' },
@@ -30,6 +36,7 @@ export default function BookRide() {
   const [step, setStep] = useState('form'); // form | estimate | riding
   const [vehicleType, setVehicleType] = useState('sedan');
   const [rideType, setRideType] = useState('solo');
+  const [genderPreference, setGenderPreference] = useState('any'); // 'any' | 'female_only'
   const [pickup, setPickup] = useState({ address: '', lat: '', lng: '' });
   const [dropoff, setDropoff] = useState({ address: '', lat: '', lng: '' });
   const [estimate, setEstimate] = useState(null);
@@ -61,17 +68,50 @@ export default function BookRide() {
     'driver:location_updated': (data) => {
       setDriver(d => d ? { ...d, currentLocation: { lat: data.lat, lng: data.lng } } : d);
     },
+    // Notify passenger when a new co-passenger joins their shared ride
+    'ride:share_passenger_joined': (data) => {
+      show(`A co-passenger joined your shared ride! (${data.totalPassengers} total)`, 'info');
+    },
   });
+
+  const fetchCoordinates = async (address) => {
+    try {
+      const searchQuery = `${address}, Dehradun`;
+      const viewbox = '77.90,30.40,78.15,30.20';
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&viewbox=${viewbox}&bounded=1`
+      );
+      const data = await response.json();
+      if (data && data.length > 0) {
+        return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+      }
+    } catch (error) {
+      console.error('Geocoding error:', error);
+    }
+    return null;
+  };
 
   const getEstimate = async () => {
     if (!pickup.address || !dropoff.address) return show('Enter pickup and dropoff addresses', 'warning');
     setLoadingEst(true);
     try {
+      const pickupCoords = await fetchCoordinates(pickup.address);
+      const dropoffCoords = await fetchCoordinates(dropoff.address);
+
+      if (!pickupCoords || !dropoffCoords) {
+        setLoadingEst(false);
+        return show('Could not find coordinates for these addresses. Try adding a city name.', 'error');
+      }
+
+      setPickup(p => ({ ...p, lat: pickupCoords.lat, lng: pickupCoords.lng }));
+      setDropoff(p => ({ ...p, lat: dropoffCoords.lat, lng: dropoffCoords.lng }));
+
       const { data } = await estimateFare({
-        pickup: { address: pickup.address, coordinates: { lat: parseFloat(pickup.lat) || 28.6, lng: parseFloat(pickup.lng) || 77.2 } },
-        dropoff: { address: dropoff.address, coordinates: { lat: parseFloat(dropoff.lat) || 28.55, lng: parseFloat(dropoff.lng) || 77.1 } },
+        pickup: { address: pickup.address, coordinates: pickupCoords },
+        dropoff: { address: dropoff.address, coordinates: dropoffCoords },
         vehicleType, rideType,
       });
+
       setEstimate(data.fare);
       setStep('estimate');
     } catch (e) {
@@ -85,7 +125,10 @@ export default function BookRide() {
       const payload = {
         pickup: { address: pickup.address, coordinates: { lat: parseFloat(pickup.lat) || 28.6, lng: parseFloat(pickup.lng) || 77.2 } },
         dropoff: { address: dropoff.address, coordinates: { lat: parseFloat(dropoff.lat) || 28.55, lng: parseFloat(dropoff.lng) || 77.1 } },
-        vehicleType, rideType,
+        vehicleType,
+        rideType,
+        // Only include genderPreference when shared ride is selected
+        ...(rideType === 'shared' && { genderPreference }),
       };
       const { data } = await requestRide(payload);
       setRide(data.ride);
@@ -129,35 +172,21 @@ export default function BookRide() {
                   style={{ width: '100%', padding: '13px 16px 13px 34px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '0 0 10px 10px', color: 'var(--text)', outline: 'none', fontSize: 15 }} />
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginTop: 12 }}>
-              {['Pickup Lat', 'Pickup Lng', 'Dropoff Lat', 'Dropoff Lng'].map((lbl, i) => (
-                <input key={lbl} placeholder={lbl} type="number" step="0.001"
-                  value={[pickup.lat, pickup.lng, dropoff.lat, dropoff.lng][i]}
-                  onChange={e => {
-                    const v = e.target.value;
-                    if (i < 2) setPickup(p => ({ ...p, [i === 0 ? 'lat' : 'lng']: v }));
-                    else setDropoff(p => ({ ...p, [i === 2 ? 'lat' : 'lng']: v }));
-                  }}
-                  style={{ padding: '8px 10px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text2)', fontSize: 12, outline: 'none' }}
-                />
-              ))}
-            </div>
           </Card>
 
           <Card>
-            <h4 style={{ marginBottom: 16, fontSize: 14, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Vehicle Type</h4>
+            <h4 style={{ marginBottom: 16, fontSize: 14, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Vehicle</h4>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
               {VEHICLE_OPTIONS.map(v => (
                 <button key={v.value} onClick={() => setVehicleType(v.value)} style={{
-                  padding: '10px 8px', borderRadius: 8, border: '1px solid',
+                  padding: '10px 4px', borderRadius: 10, border: '1px solid',
                   borderColor: vehicleType === v.value ? 'var(--accent)' : 'var(--border)',
-                  background: vehicleType === v.value ? 'var(--accent-glow)' : 'var(--bg3)',
+                  background: vehicleType === v.value ? 'var(--accent-glow)' : 'var(--surface2)',
                   color: vehicleType === v.value ? 'var(--accent)' : 'var(--text2)',
-                  cursor: 'pointer', transition: 'all 0.15s', textAlign: 'center', fontSize: 13,
-                  fontFamily: 'var(--font-display)', fontWeight: 600,
+                  cursor: 'pointer', fontSize: 11, fontWeight: 600, transition: 'all 0.15s',
                 }}>
-                  {v.label}
-                  <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>₹{v.perKm}/km</div>
+                  <div style={{ fontSize: 20, marginBottom: 4 }}>{v.label.split(' ')[0]}</div>
+                  {v.label.split(' ')[1]}
                 </button>
               ))}
             </div>
@@ -166,18 +195,50 @@ export default function BookRide() {
           <Card>
             <h4 style={{ marginBottom: 16, fontSize: 14, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Ride Type</h4>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              {RIDE_TYPES.map(r => (
-                <button key={r.value} onClick={() => setRideType(r.value)} style={{
-                  padding: '14px', borderRadius: 10, border: '1px solid',
-                  borderColor: rideType === r.value ? 'var(--accent)' : 'var(--border)',
-                  background: rideType === r.value ? 'var(--accent-glow)' : 'var(--bg3)',
-                  cursor: 'pointer', transition: 'all 0.15s', textAlign: 'left',
+              {RIDE_TYPES.map(rt => (
+                <button key={rt.value} onClick={() => setRideType(rt.value)} style={{
+                  padding: '14px 16px', borderRadius: 10, border: '1px solid',
+                  borderColor: rideType === rt.value ? 'var(--accent)' : 'var(--border)',
+                  background: rideType === rt.value ? 'var(--accent-glow)' : 'var(--surface2)',
+                  cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
                 }}>
-                  <p style={{ fontFamily: 'var(--font-display)', fontWeight: 700, color: rideType === r.value ? 'var(--accent)' : 'var(--text)', fontSize: 15 }}>{r.label}</p>
-                  <p style={{ fontSize: 12, color: 'var(--text2)', marginTop: 2 }}>{r.desc}</p>
+                  <p style={{ fontWeight: 700, color: rideType === rt.value ? 'var(--accent)' : 'var(--text)', fontSize: 15, marginBottom: 3 }}>{rt.label}</p>
+                  <p style={{ fontSize: 12, color: 'var(--text3)' }}>{rt.desc}</p>
                 </button>
               ))}
             </div>
+
+            {/* Gender preference — only for shared rides */}
+            {rideType === 'shared' && (
+              <div style={{
+                marginTop: 14, padding: 14,
+                background: 'linear-gradient(135deg, rgba(236,72,153,0.08), rgba(168,85,247,0.08))',
+                border: '1px solid rgba(236,72,153,0.2)',
+                borderRadius: 10,
+              }}>
+                <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>🛡️</span> Co-passenger Preference
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {GENDER_PREF_OPTIONS.map(opt => (
+                    <button key={opt.value} onClick={() => setGenderPreference(opt.value)} style={{
+                      padding: '10px 12px', borderRadius: 8, border: '1px solid',
+                      borderColor: genderPreference === opt.value ? 'rgba(236,72,153,0.6)' : 'var(--border)',
+                      background: genderPreference === opt.value ? 'rgba(236,72,153,0.12)' : 'var(--surface2)',
+                      cursor: 'pointer', textAlign: 'left', transition: 'all 0.15s',
+                    }}>
+                      <p style={{ fontSize: 16, marginBottom: 3 }}>{opt.icon}</p>
+                      <p style={{ fontSize: 12, fontWeight: 600, color: genderPreference === opt.value ? '#ec4899' : 'var(--text2)' }}>{opt.label}</p>
+                    </button>
+                  ))}
+                </div>
+                {genderPreference === 'female_only' && (
+                  <p style={{ fontSize: 11, color: 'rgba(236,72,153,0.7)', marginTop: 8 }}>
+                    ℹ️ You'll only be matched with female co-passengers. This may increase wait time.
+                  </p>
+                )}
+              </div>
+            )}
           </Card>
 
           <Button loading={loadingEst} onClick={getEstimate} style={{ width: '100%' }}>
@@ -194,6 +255,14 @@ export default function BookRide() {
               <div style={{ fontSize: 56, fontFamily: 'var(--font-display)', fontWeight: 800, color: 'var(--accent)', lineHeight: 1 }}>
                 ₹{estimate.estimated}
               </div>
+              {rideType === 'shared' && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8 }}>
+                  <Badge variant="success">30% shared discount</Badge>
+                  {genderPreference === 'female_only' && (
+                    <Badge variant="info">♀️ Women only</Badge>
+                  )}
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'center', gap: 20, marginTop: 16 }}>
                 <div style={{ textAlign: 'center' }}>
                   <p style={{ fontSize: 18, fontWeight: 600 }}>{estimate.distanceKm} km</p>
@@ -221,7 +290,6 @@ export default function BookRide() {
 
       {step === 'riding' && ride && (
         <div style={{ animation: 'fadeUp 0.25s ease' }}>
-          {/* Status card */}
           <Card style={{ marginBottom: 20, borderColor: meta.color, background: `linear-gradient(135deg, var(--surface), var(--bg3))` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
               <div style={{ fontSize: 40 }}>{meta.icon}</div>
@@ -250,7 +318,6 @@ export default function BookRide() {
             )}
           </Card>
 
-          {/* Driver info */}
           {driver && (
             <Card style={{ marginBottom: 16 }}>
               <h4 style={{ marginBottom: 14, color: 'var(--text2)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Your Driver</h4>
@@ -274,7 +341,6 @@ export default function BookRide() {
             </Card>
           )}
 
-          {/* Fare on completion */}
           {rideStatus === 'completed' && ride.fare && (
             <Card style={{ marginBottom: 16, borderColor: 'var(--green)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
