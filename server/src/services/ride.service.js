@@ -11,21 +11,7 @@ const generateOTP = () => Math.floor(1000 + Math.random() * 9000).toString();
 
 // Find nearby available drivers using geospatial query
 const findNearbyDrivers = async (pickupCoords, vehicleType, radiusKm = NEARBY_DRIVER_RADIUS_KM) => {
-  const query = {
-    status: DRIVER_STATUS.ONLINE,
-    currentRide: null,
-    'vehicle.type': vehicleType,
-    currentLocation: {
-      $near: {
-        $geometry: {
-          type: 'Point',
-          coordinates: [pickupCoords.lng, pickupCoords.lat],
-        },
-        $maxDistance: radiusKm * 1000, // meters
-      },
-    },
-  };
-  return Driver.find(query).limit(10);
+  return Driver.find();
 };
 
 // Notify nearby drivers of a new ride request
@@ -50,6 +36,7 @@ const notifyNearbyDrivers = async (ride) => {
 
   drivers.forEach((driver) => {
     const driverSocket = getSocketByUserId(driver._id.toString());
+    console.log(driverSocket);
     if (driverSocket) {
       io.to(driverSocket).emit(SOCKET_EVENTS.RIDE_REQUEST_INCOMING, ridePayload);
     }

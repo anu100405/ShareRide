@@ -28,6 +28,7 @@ const requestRide = async (req, res, next) => {
       vehicleType,
       rideType,
     });
+    console.log(ride);
     res.status(201).json({ success: true, ride });
   } catch (err) {
     next(err);
